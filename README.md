@@ -34,9 +34,9 @@ Download docker-robe.el and put it on your load-path.
 -   [inf-ruby.el](https://github.com/nonsequitur/inf-ruby)
 -   [robe.el](https://github.com/dgutov/robe)
 
-1.  robe.el version
+### robe.el version
 
-    This extension requires the robe.el version includes <https://github.com/dgutov/robe/pull/100>.
+This extension requires the robe.el version includes <https://github.com/dgutov/robe/pull/100>.
 
 # Configuration
 
@@ -49,7 +49,6 @@ Download docker-robe.el and put it on your load-path.
 
 You do not need anthing else using robe.  
 docker-robe.el appends the following few steps into `robe-start`.  
-
 1.  select container
     -   select the docker container names which product code run in.
 

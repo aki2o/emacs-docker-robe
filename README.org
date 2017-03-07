@@ -39,9 +39,9 @@
     - [[https://github.com/nonsequitur/inf-ruby][inf-ruby.el]]
     - [[https://github.com/dgutov/robe][robe.el]]
 
-**** robe.el version
+*** robe.el version
 
-     This extension requires the robe.el version includes https://github.com/dgutov/robe/pull/100.
+    This extension requires the robe.el version includes https://github.com/dgutov/robe/pull/100.
 
 * Configuration
 
