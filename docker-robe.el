@@ -1,3 +1,85 @@
+;;; docker-robe.el --- Let robe work under docker container
+
+;; Copyright (C) 2017  Hiroaki Otsu
+
+;; Author: Hiroaki Otsu <ootsuhiroaki@gmail.com>
+;; Keywords: ruby convenience docker
+;; URL: https://github.com/aki2o/emacs-docker-robe
+;; Version: 0.0.1
+;; Package-Requires: ((inf-ruby "2.5.0") (robe "0.7.9"))
+
+;; This program is free software; you can redistribute it and/or modify
+;; it under the terms of the GNU General Public License as published by
+;; the Free Software Foundation, either version 3 of the License, or
+;; (at your option) any later version.
+
+;; This file is distributed in the hope that it will be useful,
+;; but WITHOUT ANY WARRANTY; without even the implied warranty of
+;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;; GNU General Public License for more details.
+
+;; You should have received a copy of the GNU General Public License
+;; along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+;;; Commentary:
+;; 
+;; You'll be able to develop using robe under docker container in the following conditions.
+;; 
+;;  - Developing in host with volume mounted to the docker container which runs the product code.
+;;  - The docker container expose a port for docker-robe.el
+;;  - Host configures a port forwarding to the docker container port.
+;;  - It's able to copy `robe-ruby-path' into the docker container same path using docker command.
+;; 
+;; For more infomation, see <https://github.com/aki2o/emacs-docker-robe/blob/master/README.md>
+
+;;; Dependencies:
+;; 
+;; - inf-ruby.el ( see <https://github.com/nonsequitur/inf-ruby> )
+;; - robe.el ( see <https://github.com/dgutov/robe> )
+
+;;; Installation:
+;;
+;; Put this to your load-path.
+;; And put the following lines in your .emacs or site-start.el file.
+;; 
+;; (require 'docker-robe)
+;; (docker-robe:activate)
+
+;;; Configuration:
+;; 
+;; Nothing
+
+;;; Customization:
+;; 
+;; [EVAL] (autodoc-document-lisp-buffer :type 'user-variable :prefix "docker-robe:" :docstring t)
+;; 
+;;  *** END auto-documentation
+
+;;; API:
+;; 
+;; [EVAL] (autodoc-document-lisp-buffer :type 'macro :prefix "docker-robe:" :docstring t)
+;; 
+;;  *** END auto-documentation
+;; [EVAL] (autodoc-document-lisp-buffer :type 'function :prefix "docker-robe:" :docstring t)
+;; 
+;;  *** END auto-documentation
+;; [EVAL] (autodoc-document-lisp-buffer :type 'command :prefix "docker-robe:" :docstring t)
+;; 
+;;  *** END auto-documentation
+;; [Note] Functions and variables other than listed above, Those specifications may be changed without notice.
+
+;;; Tested On:
+;; 
+;; - Emacs ... GNU Emacs 24.5.1 (x86_64-apple-darwin14.5.0, NS apple-appkit-1348.17) of 2016-06-16 on 192.168.102.190
+;; - docker ... Docker version 1.12.6, build 78d1802
+;; - inf-ruby.el ... Version 2.5.0
+;; - robe.el ... Version 0.7.9
+
+
+;; Enjoy!!!
+
+
+;;; Code:
 (require 'cl-lib)
 (require 'inf-ruby)
 (require 'robe)
@@ -65,13 +147,13 @@
      res)))
 
 
-(defun docker-robe:dockerize (activate)
-  (if activate
-      (progn
-        (ad-enable-regexp "docker-robe:dockerize")
-        (ad-activate-regexp "docker-robe:dockerize"))
-    (ad-disable-regexp "docker-robe:dockerize")
-    (ad-deactivate-regexp "docker-robe:dockerize")))
+(defun docker-robe:activate ()
+  (ad-enable-regexp "docker-robe:dockerize")
+  (ad-activate-regexp "docker-robe:dockerize"))
+
+(defun docker-robe:deactivate ()
+  (ad-disable-regexp "docker-robe:dockerize")
+  (ad-deactivate-regexp "docker-robe:dockerize"))
 
 
 (defadvice robe-start (around docker-robe:dockerize disable)
