@@ -51,8 +51,10 @@ You do not need anthing else using robe.
 docker-robe.el appends the following few steps into `robe-start`.  
 1.  select container
     -   select the docker container names which product code run in.
+
 2.  select port
     -   select a exposed port of the container.
+
 3.  config source volume mapping
     -   whether to map the mount path on the container to local path.
     -   If mapping the path, input the local path.
