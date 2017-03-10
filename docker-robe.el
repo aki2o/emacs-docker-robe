@@ -80,7 +80,7 @@
 
 
 ;;; Code:
-(require 'cl-lib)
+(eval-when-compile (require 'cl))
 (require 'inf-ruby)
 (require 'robe)
 (require 'advice)
@@ -98,9 +98,9 @@
 
 (defun docker-robe::select-container ()
   (let* ((cmd "ps --format='{{.Names}} {{.ID}}'")
-         (container-id-of (cl-loop for line in (split-string (docker-robe::exec 'shell-command-to-string cmd) "\n")
-                                   if (> (length line) 1)
-                                   collect (apply 'cons (split-string line " "))))
+         (container-id-of (loop for line in (split-string (docker-robe::exec 'shell-command-to-string cmd) "\n")
+                                if (> (length line) 1)
+                                collect (apply 'cons (split-string line " "))))
          (container-names (mapc 'car container-id-of))
          (container-name (completing-read "select container: " container-names nil t nil '())))
     (assoc-default container-name container-id-of)))
@@ -118,40 +118,51 @@
 
 (defun docker-robe::source-map (container)
   (let* ((cmd (format "inspect --format='{{range $conf := .Mounts}}{{$conf.Destination}}:{{end}}' %s" container)))
-    (cl-loop for remote-path in (split-string (docker-robe::exec 'shell-command-to-string cmd) ":")
-             for local-path = (when (and (string-match "/" remote-path)
-                                         (y-or-n-p (format "Local source is mounted on %s" remote-path)))
-                                (directory-file-name (read-directory-name "Local source path : " nil nil t default-directory)))
-             if local-path
-             collect (cons remote-path local-path))))
+    (loop for remote-path in (split-string (docker-robe::exec 'shell-command-to-string cmd) ":")
+          for local-path = (when (and (string-match "/" remote-path)
+                                      (y-or-n-p (format "Local source is mounted on %s" remote-path)))
+                             (directory-file-name (read-directory-name "Local source path : " nil nil t default-directory)))
+          if local-path
+          collect (cons remote-path local-path))))
 
 (defun docker-robe::ensure-library (container)
-  (let ((robe-library-dir (file-name-directory robe-ruby-path)))
-    (docker-robe::exec 'shell-command (format "exec -it %s mkdir -p '%s'" container robe-library-dir))
-    (docker-robe::exec 'shell-command (format "cp '%s' '%s:%s'" robe-ruby-path container robe-library-dir))))
+  (let ((robe-library-dir (shell-quote-argument (file-name-directory robe-ruby-path))))
+    (docker-robe::exec 'shell-command (format "exec -i %s mkdir -p %s" container robe-library-dir))
+    (docker-robe::exec 'shell-command (format "cp %s %s:%s" (shell-quote-argument robe-ruby-path) container robe-library-dir))))
+
+(defun docker-robe::local-path-mapped (remote-path)
+  (loop for (remote-map . local-map) in docker-robe:source-map
+        for re = (rx-to-string `(and bos ,remote-map))
+        for local-path = (replace-regexp-in-string re local-map remote-path)
+        if (not (string= remote-path local-path))
+        return local-path
+        finally return remote-path))
 
 (defun docker-robe::filter-response (endpoint res)
   (cond
     ((string= endpoint "class_locations")
-     (let ((source-map (buffer-local-value 'docker-robe:source-map (inf-ruby-buffer))))
+     (let ((docker-robe:source-map (buffer-local-value 'docker-robe:source-map (inf-ruby-buffer))))
+       (mapcar 'docker-robe::local-path-mapped res)))
+    ((string= endpoint "method_targets")
+     (let ((docker-robe:source-map (buffer-local-value 'docker-robe:source-map (inf-ruby-buffer))))
        (mapcar
-        (lambda (remote-location)
-          (cl-loop for (remote-path . local-path) in source-map
-                   for re = (rx-to-string `(and bos ,remote-path))
-                   for local-location = (replace-regexp-in-string re local-path remote-location)
-                   if (not (string= remote-location local-location))
-                   return local-location
-                   finally return remote-location))
+        (lambda (method-definition)
+          (multiple-value-bind (classnm flg methodnm args path row-index) method-definition
+            `(,classnm ,flg ,methodnm ,args ,(docker-robe::local-path-mapped path) ,row-index)))
         res)))
     (t
      res)))
 
 
+;;;###autoload
 (defun docker-robe:activate ()
+  "Activate docker-robe advices."
   (ad-enable-regexp "docker-robe:dockerize")
   (ad-activate-regexp "docker-robe:dockerize"))
 
+;;;###autoload
 (defun docker-robe:deactivate ()
+  "Deactivate docker-robe advices."
   (ad-disable-regexp "docker-robe:dockerize")
   (ad-deactivate-regexp "docker-robe:dockerize"))
 
