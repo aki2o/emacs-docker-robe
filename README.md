@@ -59,4 +59,10 @@ docker-robe.el appends the following few steps into `robe-start`.
     -   whether to map the mount path on the container to local path.
     -   If mapping the path, input the local path.
 
+### Reconfigure
+
+The above steps will be cached.  
+You'll be able to rerun it by M-x `docker-projectile-rails:configure-current-project`.
+
+
 **Enjoy!!!**

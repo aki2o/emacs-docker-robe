@@ -5,7 +5,7 @@
 ;; Author: Hiroaki Otsu <ootsuhiroaki@gmail.com>
 ;; Keywords: ruby convenience docker
 ;; URL: https://github.com/aki2o/emacs-docker-robe
-;; Version: 0.1.0
+;; Version: 0.2.0
 ;; Package-Requires: ((inf-ruby "2.5.0") (robe "0.7.9"))
 
 ;; This program is free software; you can redistribute it and/or modify
@@ -216,12 +216,13 @@
      res)))
 
 (defun docker-robe::local-path-for (remote-path)
-  (loop for (remote-map . local-map) in (buffer-local-value 'docker-robe:volume-local-path-alist (inf-ruby-buffer))
-        for re = (rx-to-string `(and bos ,remote-map))
-        for local-path = (replace-regexp-in-string re local-map remote-path)
-        if (not (string= remote-path local-path))
-        return local-path
-        finally return remote-path))
+  (when remote-path
+    (loop for (remote-map . local-map) in (buffer-local-value 'docker-robe:volume-local-path-alist (inf-ruby-buffer))
+          for re = (rx-to-string `(and bos ,remote-map))
+          for local-path = (replace-regexp-in-string re local-map remote-path)
+          if (not (string= remote-path local-path))
+          return local-path
+          finally return remote-path)))
 
 
 ;;;;;;;;;;;;
