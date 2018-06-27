@@ -5,8 +5,8 @@
 ;; Author: Hiroaki Otsu <ootsuhiroaki@gmail.com>
 ;; Keywords: ruby convenience docker
 ;; URL: https://github.com/aki2o/emacs-docker-robe
-;; Version: 0.2.0
-;; Package-Requires: ((inf-ruby "2.5.0") (robe "0.7.9"))
+;; Version: 0.3.0
+;; Package-Requires: ((inf-ruby "2.5.0") (robe "0.7.9") (docker-tramp "0.1"))
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -36,6 +36,7 @@
 ;; 
 ;; - inf-ruby.el ( see <https://github.com/nonsequitur/inf-ruby> )
 ;; - robe.el ( see <https://github.com/dgutov/robe> )
+;; - docker-tramp.el ( see <https://github.com/emacs-pe/docker-tramp.el> )
 
 ;;; Installation:
 ;;
@@ -74,6 +75,7 @@
 ;; - docker ... Docker version 1.12.6, build 78d1802
 ;; - inf-ruby.el ... Version 2.5.0
 ;; - robe.el ... Version 0.7.9
+;; - docker-tramp.el ... Version 0.1
 
 
 ;; Enjoy!!!
@@ -83,6 +85,8 @@
 (eval-when-compile (require 'cl))
 (require 'inf-ruby)
 (require 'robe)
+(require 'docker-tramp)
+(require 'docker-tramp-compat)
 (require 'projectile nil t)
 (require 'advice)
 
@@ -107,6 +111,7 @@
 (defvar docker-robe:project-cache-hash nil)
 (defvar docker-robe:container nil)
 (defvar docker-robe:volume-local-path-alist nil)
+(defvar docker-robe:entrypoint nil)
 
 
 ;;;;;;;;;;;;;
@@ -125,6 +130,11 @@
   (let ((cmd (format "ps --format='{{.ID}}' -f 'name=%s'" container-name)))
     (replace-regexp-in-string "\n" "" (docker-robe::exec 'shell-command-to-string cmd))))
 
+(defun docker-robe::docker-tramp-path-prefix (container)
+  (format "/docker:%s:" (if docker-tramp-use-names
+                            (docker-robe::container-name container)
+                          container)))
+
 
 ;;;;;;;;;;;
 ;; Cache
@@ -135,11 +145,13 @@
                cache-name)))
 
 (defun docker-robe::ensure-project-cache ()
-  (gethash docker-robe:project-root
-           (or docker-robe:project-cache-hash
-               (setq docker-robe:project-cache-hash
-                     (or (docker-robe::load-project-cache-hash)
-                         (make-hash-table :test 'equal))))))
+  (gethash docker-robe:project-root (docker-robe::ensure-project-cache-hash)))
+
+(defun docker-robe::ensure-project-cache-hash ()
+  (or docker-robe:project-cache-hash
+      (setq docker-robe:project-cache-hash
+            (or (docker-robe::load-project-cache-hash)
+                (make-hash-table :test 'equal)))))
 
 (defun docker-robe::load-project-cache-hash ()
   (when (file-exists-p docker-robe:project-cache-file)
@@ -147,11 +159,11 @@
             (insert-file-contents docker-robe:project-cache-file)
             (buffer-string)))))
 
-(defun* docker-robe::store-project-cache (&key container port volume-local-path-alist)
+(defun* docker-robe::store-project-cache (&key container port volume-local-path-alist entrypoint)
   (when docker-robe:project-root
     (puthash docker-robe:project-root
-             `(:container ,container :port ,port :volume-local-path-alist ,volume-local-path-alist)
-             docker-robe:project-cache-hash)
+             `(:container ,container :port ,port :volume-local-path-alist ,volume-local-path-alist, :entrypoint ,entrypoint)
+             (docker-robe::ensure-project-cache-hash))
     (with-temp-buffer
       (insert (prin1-to-string docker-robe:project-cache-hash))
       (write-file docker-robe:project-cache-file))))
@@ -185,13 +197,21 @@
 
 (defun* docker-robe::select-volume-local-path (container &key (use-cache nil))
   (or (when use-cache (docker-robe::project-cached-value :volume-local-path-alist))
-      (let* ((cmd (format "inspect --format='{{range $conf := .Mounts}}{{$conf.Destination}}:{{end}}' %s" container)))
+      (let* ((cmd (format "inspect --format='{{range $conf := .Mounts}}{{if eq $conf.Type \"bind\"}}{{$conf.Destination}}:{{end}}{{end}}' %s" container)))
         (loop for remote-path in (split-string (docker-robe::exec 'shell-command-to-string cmd) ":")
               for local-path = (when (and (string-match "/" remote-path)
                                           (y-or-n-p (format "Local source is mounted on %s" remote-path)))
                                  (directory-file-name (read-directory-name "Local source path : " nil nil t default-directory)))
               if local-path
               collect (cons remote-path local-path)))))
+
+(defun* docker-robe::select-entrypoint (container &key (use-cache nil))
+  (or (when use-cache (docker-robe::project-cached-value :entrypoint))
+      (let* ((docker-tramp-path-prefix (docker-robe::docker-tramp-path-prefix container))
+             (selected-value (read-file-name "select entrypoint: " (concat docker-tramp-path-prefix "/"))))
+        (when (and selected-value
+                   (> (length selected-value) (length docker-tramp-path-prefix)))
+          (substring selected-value (length docker-tramp-path-prefix))))))
 
 (defun docker-robe::ensure-library (container)
   (let ((robe-library-dir (shell-quote-argument (file-name-directory robe-ruby-path))))
@@ -203,26 +223,28 @@
 ;; Handling robe response
 
 (defun docker-robe::filter-response (endpoint res)
-  (cond
-    ((string= endpoint "class_locations")
-     (mapcar 'docker-robe::local-path-for res))
-    ((string= endpoint "method_targets")
-     (mapcar
-      (lambda (method-definition)
-        (multiple-value-bind (classnm flg methodnm args path row-index) method-definition
-          `(,classnm ,flg ,methodnm ,args ,(docker-robe::local-path-for path) ,row-index)))
-      res))
-    (t
-     res)))
+  (if docker-robe:container
+      (cond
+       ((string= endpoint "class_locations")
+        (mapcar 'docker-robe::find-accessible-path-for res))
+       ((string= endpoint "method_targets")
+        (mapcar
+         (lambda (method-definition)
+           (multiple-value-bind (classnm flg methodnm args path row-index) method-definition
+             `(,classnm ,flg ,methodnm ,args ,(docker-robe::find-accessible-path-for path) ,row-index)))
+         res))
+       (t
+        res))
+    res))
 
-(defun docker-robe::local-path-for (remote-path)
+(defun docker-robe::find-accessible-path-for (remote-path)
   (when remote-path
     (loop for (remote-map . local-map) in (buffer-local-value 'docker-robe:volume-local-path-alist (inf-ruby-buffer))
           for re = (rx-to-string `(and bos ,remote-map))
           for local-path = (replace-regexp-in-string re local-map remote-path)
           if (not (string= remote-path local-path))
           return local-path
-          finally return remote-path)))
+          finally return (concat (docker-robe::docker-tramp-path-prefix docker-robe:container) remote-path))))
 
 
 ;;;;;;;;;;;;
@@ -241,27 +263,32 @@
            (docker-robe:container (docker-robe::select-container :use-cache t))
            (robe-host nil)
            (robe-port (docker-robe::select-port docker-robe:container :use-cache t))
-           (volume-local-path-alist (docker-robe::select-volume-local-path docker-robe:container :use-cache t)))
+           (volume-local-path-alist (docker-robe::select-volume-local-path docker-robe:container :use-cache t))
+           (docker-robe:entrypoint (docker-robe::select-entrypoint docker-robe:container :use-cache t)))
       (docker-robe::store-project-cache :container docker-robe:container
                                         :port robe-port
-                                        :volume-local-path-alist volume-local-path-alist)
+                                        :volume-local-path-alist volume-local-path-alist
+                                        :entrypoint docker-robe:entrypoint)
       (docker-robe::ensure-library docker-robe:container)
       ad-do-it
       (with-current-buffer (inf-ruby-buffer)
         (set (make-local-variable 'docker-robe:container) docker-robe:container)
         (set (make-local-variable 'robe-port) robe-port)
-        (set (make-local-variable 'docker-robe:volume-local-path-alist) volume-local-path-alist))))))
+        (set (make-local-variable 'docker-robe:volume-local-path-alist) volume-local-path-alist)
+        (set (make-local-variable 'docker-robe:entrypoint) docker-robe:entrypoint))))))
 
 (defadvice robe-request (around docker-robe:dockerize disable)
   (let ((robe-host "127.0.0.1")
-        (robe-port (buffer-local-value 'robe-port (inf-ruby-buffer))))
+        (robe-port (buffer-local-value 'robe-port (inf-ruby-buffer)))
+        (docker-robe:container (buffer-local-value 'docker-robe:container (inf-ruby-buffer)))
+        (docker-robe:entrypoint (buffer-local-value 'docker-robe:entrypoint (inf-ruby-buffer))))
     ad-do-it
     (setq ad-return-value (docker-robe::filter-response (ad-get-arg 0) ad-return-value))))
 
 (defadvice inf-ruby-console-run (around docker-robe:dockerize disable)
   (when (and docker-robe:enabled
              docker-robe:container)
-    (ad-set-arg 0 (format "docker exec -it %s %s" docker-robe:container (ad-get-arg 0))))
+    (ad-set-arg 0 (format "docker exec -it %s %s %s" docker-robe:container (or docker-robe:entrypoint "") (ad-get-arg 0))))
   ad-do-it)
 
 
@@ -289,10 +316,12 @@
                                        (error "Can't detect project root path for %s" (buffer-file-name))))
          (container (docker-robe::select-container))
          (port (docker-robe::select-port container))
-         (volume-local-path-alist (docker-robe::select-volume-local-path container)))
+         (volume-local-path-alist (docker-robe::select-volume-local-path container))
+         (entrypoint (docker-robe::select-entrypoint container)))
     (docker-robe::store-project-cache :container container
                                       :port port
-                                      :volume-local-path-alist volume-local-path-alist)))
+                                      :volume-local-path-alist volume-local-path-alist
+                                      :entrypoint entrypoint)))
 
 
 (provide 'docker-robe)
